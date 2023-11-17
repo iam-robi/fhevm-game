@@ -51,7 +51,7 @@ contract BunkerWarZ {
 
     // Mapping to store games by their IDs
     mapping(uint => Game) public games;
-    uint game_id;
+    uint public new_game_id;
 
     // Event to notify when a new game is created
     event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address player1, address player2);
@@ -74,21 +74,21 @@ contract BunkerWarZ {
                 _board_height >= MIN_ROWS && _board_height <= MAX_ROWS,
                 "board size is incorrect");
         // Create a new game with the specified parameters
-        Game storage newGame = games[game_id];
+        Game storage newGame = games[new_game_id];
         newGame.player1 = _player1;
         newGame.player2 = _player2;
         newGame.game_state = GameState.PLAYER1_TURN; // player 1 starts
         newGame.board_width = _board_width;
         newGame.board_height = _board_height;
 
-        emit NewGameCreated(game_id, _board_width, _board_height, _player1, _player2);
+        emit NewGameCreated(new_game_id, _board_width, _board_height, _player1, _player2);
 
         // Increment the game_id
-        game_id++;        
+        new_game_id++;        
     }
 
     // start a turn
-    function _start_turn(uint game_id) internal returns (Game storage, bool){
+    function _start_turn(uint game_id) internal view returns (Game storage, bool){
         // load the game from storage:
         Game storage game = games[game_id];
         bool player1_plays;
