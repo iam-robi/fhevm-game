@@ -6,6 +6,13 @@ import { getSigners } from "../signers";
 import { createTransaction } from "../utils";
 import { deployBunkerWarZFixture } from "./BunkerWarZ.fixture";
 
+const UNINITIALIZED = 0;
+const PLAYER1_TURN = 1;
+const PLAYER2_TURN = 2;
+const PLAYER1_WON = 3;
+const PLAYER2_WON = 4;
+const DRAW = 5;
+
 describe("BunkerWarZ", function () {
   before(async function () {
     this.signers = await getSigners(ethers);
@@ -19,32 +26,45 @@ describe("BunkerWarZ", function () {
   });
 
   it("should allow to create games", async function () {
-    let transaction = await createTransaction(this.contract.new_game, 3,5,this.signers.player1.address,this.signers.player2.address);
-    const new_game_id = await this.contract.new_game_id();
+
+    const board_width = 3;
+    const board_height = 5;
+
+    let transaction = await createTransaction(this.contract.new_game, board_width, board_height, this.signers.alice.address,this.signers.bob.address);
+    await transaction.wait();
+    let new_game_id = await this.contract.new_game_id();
     expect(new_game_id).to.equal(1);
 
-    let transaction = await createTransaction(this.contract.new_game, 5,8,this.signers.player1.address,this.signers.player2.address);
-    const new_game_id = await this.contract.new_game_id();
+    let game = await this.contract.games(0);
+    game = await this.contract.games(0);
+    expect(game[0]).to.equal(this.signers.alice.address);
+    expect(game[1]).to.equal(this.signers.bob.address);
+    expect(game[2]).to.equal(board_width);
+    expect(game[3]).to.equal(board_height);
+    expect(game[4]).to.equal(0);
+    expect(game[5]).to.equal(PLAYER1_TURN);    
+
+    transaction = await createTransaction(this.contract.new_game, 5,8,this.signers.alice.address,this.signers.bob.address);
+    await transaction.wait();
+    new_game_id = await this.contract.new_game_id();
     expect(new_game_id).to.equal(2);
   });
 
-  it.only("should allow to build something", async function () {
+  it("should allow to build something", async function () {
 
-    //await this.contract.connect(this.signers.alice).new_game(3,5,this.signers.player1.address,this.signers.player2.address);
-
-    let transaction = await createTransaction(this.contract.new_game, 3,5,this.signers.player1.address,this.signers.player2.address);
+    let transaction = await createTransaction(this.contract.new_game, 3,5,this.signers.alice.address,this.signers.bob.address);
     await transaction.wait();
 
-    // let game = await this.contract.games(0);
-    // console.log(game);
+    let game = await this.contract.games(0);
+    game = await this.contract.games(0);
+    expect(game[5]).to.equal(PLAYER1_TURN);
 
-    // const building_type_minus_1 = this.instances.player1.encrypt8(0);
-    // //await this.contract.connect(this.signers.player1).build(0, 0, 0, building_type_minus_1);
-    // const transaction2 = await createTransaction(this.contract.connect(this.signers.player1).build, 0, 0, 0, building_type_minus_1);
-    // await transaction2.wait();
+    const building_type_minus_1 = this.instances.alice.encrypt8(0);
+    const transaction2 = await createTransaction(this.contract.connect(this.signers.alice).build, 0, 0, 0, building_type_minus_1);
+    await transaction2.wait();
 
-    // game = await this.contract.games(0);
-    // console.log(game);
+    game = await this.contract.games(0);
+    expect(game[5]).to.equal(PLAYER2_TURN);
   });
 
 
