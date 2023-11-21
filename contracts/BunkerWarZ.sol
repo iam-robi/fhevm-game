@@ -33,7 +33,14 @@ contract BunkerWarZ is EIP712WithModifier{
 
         // Booleans
         bool player1_can_send_missile; // prevent sending two missiles in a row
-        bool player2_can_send_missile;        
+        bool player2_can_send_missile;  
+
+        // TODO: remove this when event can be querried
+        // these variables are used because the event cannot 
+        // be queried for now on the tesnet, but the information is in the MissileHit events
+        bool missile_hit;
+        uint8 missile_hit_at_row_plus1;
+        uint8 missile_hit_at_column;
 
         // Numbers of houses built by players
         euint8 player1_houses;
@@ -71,8 +78,8 @@ contract BunkerWarZ is EIP712WithModifier{
     constructor() EIP712WithModifier("Bunker War Z", "1.0") {}
 
     // Get some value of an encrypted board (if the player needs to rebuild his game state)
-    function get_board_value(uint game_id, uint8 row, uint8 column, bytes32 publicKey, bytes calldata signature)
-                            public view onlySignedPublicKey(publicKey, signature) returns (bytes memory){
+    function getBoardValue(uint game_id, uint8 row, uint8 column, bytes32 publicKey, bytes calldata signature)
+    public view onlySignedPublicKey(publicKey, signature) returns (bytes memory){
         Game storage game = games[game_id];
         require(row <= game.board_height && column <= game.board_width, "row or column is out of board's dimensions");
         if (msg.sender == game.player1){
@@ -82,23 +89,30 @@ contract BunkerWarZ is EIP712WithModifier{
         }else{
             revert("Only players of the game can get board values");
         }
-    }    
+    }
+
+    // Get whether the missile hit and where untill event can be querried
+    // TODO: remove this when event can be querried
+    function getMissileHit(uint game_id) public view returns (bool, uint8, uint8){
+        Game storage game = games[game_id];
+        return (game.missile_hit, game.missile_hit_at_row_plus1, game.missile_hit_at_column);
+    }
 
     // Create a new game
-    function new_game(uint8 _board_width, uint8 _board_height, address _player1, address _player2) public {
+    function newGame(uint8 _board_width, uint8 _board_height, address _player1, address _player2) public {
         require(_player1 != address(0) && _player2 != address(0), "players must not be null address");
         require(_board_width >= MIN_COLUMNS && _board_width <= MAX_COLUMNS &&
                 _board_height >= MIN_ROWS && _board_height <= MAX_ROWS,
                 "board size is incorrect");
         // Create a new game with the specified parameters
-        Game storage newGame = games[new_game_id];
-        newGame.player1 = _player1;
-        newGame.player2 = _player2;
-        newGame.game_state = GameState.PLAYER1_TURN; // player 1 starts
-        newGame.board_width = _board_width;
-        newGame.board_height = _board_height;
-        newGame.player1_can_send_missile = true;
-        newGame.player2_can_send_missile = true;
+        Game storage new_game = games[new_game_id];
+        new_game.player1 = _player1;
+        new_game.player2 = _player2;
+        new_game.game_state = GameState.PLAYER1_TURN; // player 1 starts
+        new_game.board_width = _board_width;
+        new_game.board_height = _board_height;
+        new_game.player1_can_send_missile = true;
+        new_game.player2_can_send_missile = true;
 
         emit NewGameCreated(new_game_id, _board_width, _board_height, _player1, _player2);
 
@@ -107,7 +121,7 @@ contract BunkerWarZ is EIP712WithModifier{
     }
 
     // start a turn
-    function _start_turn(uint game_id) internal view returns (Game storage, bool){
+    function _startTurn(uint game_id) internal view returns (Game storage, bool){
         // load the game from storage:
         Game storage game = games[game_id];
         bool player1_plays;
@@ -127,7 +141,7 @@ contract BunkerWarZ is EIP712WithModifier{
     } 
 
     // End a turn
-    function _end_turn(Game storage game) internal {
+    function _endTurn(Game storage game) internal {
         if(game.game_state == GameState.PLAYER1_TURN){
             // change to player2
             game.game_state = GameState.PLAYER2_TURN;
@@ -154,12 +168,12 @@ contract BunkerWarZ is EIP712WithModifier{
             game.game_state = GameState.PLAYER1_TURN;
         }
         else{
-            revert("Should not call _end_turn if the game is not ongoing");
+            revert("Should not call _endTurn if the game is not ongoing");
         }
     }
 
     /// check whether some FHE euint8 value was initilized and decrypt it or return EMPTY
-    function _empty_or_value(euint8 decrypt_value) internal view returns (uint8) {
+    function _emptyOrValue(euint8 decrypt_value) internal view returns (uint8) {
         uint8 value = TFHE.isInitialized(decrypt_value) ? TFHE.decrypt(decrypt_value) : EMPTY;
         return value;
     }
@@ -178,7 +192,7 @@ contract BunkerWarZ is EIP712WithModifier{
         // start turn
         Game storage game;
         bool player1_plays;
-        (game, player1_plays) = _start_turn(game_id);
+        (game, player1_plays) = _startTurn(game_id);
 
         // check row and column
         require(row <= game.board_height && column <= game.board_width, "row or column is out of board's dimensions");
@@ -187,12 +201,13 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => euint8)) storage board = (player1_plays)? game.player1_board: game.player2_board;
 
         // check that the cell is empty
-        uint8 cell = _empty_or_value(board[row][column]);
+        uint8 cell = _emptyOrValue(board[row][column]);
         require(cell == EMPTY, "The cell is already built");
 
+        // TODO: remove this when event can be querried
         // check that there is something built under the cell if row is >0
         if(row > 0){
-            uint8 cell_below = _empty_or_value(board[row-1][column]);
+            uint8 cell_below = _emptyOrValue(board[row-1][column]);
             require(cell_below != EMPTY, "The cell below must be built");            
         }
        
@@ -209,20 +224,25 @@ contract BunkerWarZ is EIP712WithModifier{
         }
 
         // emit event, the location of the building is known
-        emit BuildingPlaced(row, column, player1_plays);        
+        emit BuildingPlaced(row, column, player1_plays);      
+
+        // also reset the missile hit values in the gamestate untill event can be querried
+        game.missile_hit = false;
+        uint8 missile_hit_at_row_plus1 = 0;
+        uint8 missile_hit_at_column = 0;
         
-        _end_turn(game);
+        _endTurn(game);
     }
 
     // Or, send a missile toward one of the columns of the opponent
     // The missile will destroy all houses of the column untill it reaches a bunker
     // All constructions below the bunker will stay hidden
-    function send_missile(uint game_id, uint8 column) public onlyPlayers(game_id) {
+    function sendMissile(uint game_id, uint8 column) public onlyPlayers(game_id) {
         
         // start turn
         Game storage game;
         bool player1_plays;
-        (game, player1_plays) = _start_turn(game_id);
+        (game, player1_plays) = _startTurn(game_id);
 
         // check that the player can send a missile
         require( (player1_plays && game.player1_can_send_missile) || (!player1_plays && game.player2_can_send_missile),
@@ -233,7 +253,7 @@ contract BunkerWarZ is EIP712WithModifier{
 
         uint8 row_plus_one = game.board_height;
         while (row_plus_one > 0){
-            uint8 cell = _empty_or_value(target_board[row_plus_one-1][column]);
+            uint8 cell = _emptyOrValue(target_board[row_plus_one-1][column]);
             if(cell == BUNKER){
                 // break if the missile hits a bunker
                 break;
@@ -263,6 +283,12 @@ contract BunkerWarZ is EIP712WithModifier{
             game.player2_can_send_missile = false;
         }
 
-        _end_turn(game);
+        // TODO: remove this when event can be querried
+        // also store the missile hit in the gamestate untill event can be querried
+        game.missile_hit = true;
+        game.missile_hit_at_row_plus1 = row_plus_one;
+        game.missile_hit_at_column = column;
+
+        _endTurn(game);
     }    
 }

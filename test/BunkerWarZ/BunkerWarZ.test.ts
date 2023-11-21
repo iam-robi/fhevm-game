@@ -13,16 +13,57 @@ const PLAYER1_WON = 3;
 const PLAYER2_WON = 4;
 const DRAW = 5;
 
+const EMPTY = 0;
+const HOUSE = 1;
+const BUNKER = 2;
+
+
 describe("BunkerWarZ", function () {
   before(async function () {
     this.signers = await getSigners(ethers);
+
+    this.create_game = async (board_width: uint8, board_height: uint8) => {
+        const transaction = await createTransaction(
+          this.contract.newGame, board_width, board_height,
+          this.signers.alice.address,this.signers.bob.address
+        );
+        await transaction.wait();
+        this.last_game_id++;  
+    };
+
+    this.alice_builds_at = async (buildingType: uint8, row: uint8, column: uint8) => {
+        const building_type_minus_1 = this.instances.alice.encrypt8(buildingType-1);
+        const transaction = await createTransaction(
+          this.contract.connect(this.signers.alice).build, this.last_game_id, row, column, building_type_minus_1
+        );
+        await transaction.wait();      
+    };
+
+    this.bob_builds_at = async (buildingType: uint8, row: uint8, column: uint8) => {
+        const building_type_minus_1 = this.instances.bob.encrypt8(buildingType-1);
+        const transaction = await createTransaction(
+          this.contract.connect(this.signers.bob).build, this.last_game_id, row, column, building_type_minus_1
+        );
+        await transaction.wait();      
+    };
+
+    this.bob_sends_missile_at = async (column: uint8) => {
+        const transaction = await createTransaction(
+          this.contract.connect(this.signers.bob).sendMissile, this.last_game_id, column
+        );
+        await transaction.wait();      
+    };
+
   });
 
   beforeEach(async function () {
     const contract = await deployBunkerWarZFixture();
     this.contractAddress = await contract.getAddress();
     this.contract = contract;
-    this.instances = await createInstances(this.contractAddress, ethers, this.signers);
+    this.instances = await createInstances(this.contractAddress, ethers, this.signers);    
+    // this will tell the id of the last created game, it needs to
+    // be increased of 1 after every call to contract.new_game
+    this.last_game_id = -1;
   });
 
   it("should allow to create games", async function () {
@@ -30,95 +71,118 @@ describe("BunkerWarZ", function () {
     const board_width = 3;
     const board_height = 5;
 
-    let transaction = await createTransaction(this.contract.new_game, board_width, board_height, this.signers.alice.address,this.signers.bob.address);
-    await transaction.wait();
-    let new_game_id = await this.contract.new_game_id();
-    expect(new_game_id).to.equal(1);
+    await this.create_game(board_width, board_height);
 
-    let game = await this.contract.games(0);
-    game = await this.contract.games(0);
+    let new_game_id = await this.contract.new_game_id();
+    expect(new_game_id).to.equal(this.last_game_id+1);
+
+    let game = await this.contract.games(this.last_game_id);
     expect(game[0]).to.equal(this.signers.alice.address);
     expect(game[1]).to.equal(this.signers.bob.address);
     expect(game[2]).to.equal(board_width);
     expect(game[3]).to.equal(board_height);
     expect(game[4]).to.equal(0);
     expect(game[5]).to.equal(PLAYER1_TURN);    
+    expect(game[6]).to.equal(true);
+    expect(game[7]).to.equal(true);
 
-    transaction = await createTransaction(this.contract.new_game, 5,8,this.signers.alice.address,this.signers.bob.address);
-    await transaction.wait();
+    await this.create_game(5, 8);
+
     new_game_id = await this.contract.new_game_id();
-    expect(new_game_id).to.equal(2);
+    expect(new_game_id).to.equal(this.last_game_id+1);
   });
 
   it("should allow to build something", async function () {
 
-    let transaction = await createTransaction(this.contract.new_game, 3,5,this.signers.alice.address,this.signers.bob.address);
-    await transaction.wait();
+    await this.create_game(3, 5);
+    let transaction;
 
-    let game = await this.contract.games(0);
-    game = await this.contract.games(0);
-    expect(game[5]).to.equal(PLAYER1_TURN);
+    // build a house
+    await this.alice_builds_at(HOUSE, 0,0);
 
-    const building_type_minus_1 = this.instances.alice.encrypt8(0);
-    const transaction2 = await createTransaction(this.contract.connect(this.signers.alice).build, 0, 0, 0, building_type_minus_1);
-    await transaction2.wait();
-
-    game = await this.contract.games(0);
+    // check that the turn changed to bob
+    let game = await this.contract.games(this.last_game_id);
     expect(game[5]).to.equal(PLAYER2_TURN);
+
+    // // get the corresponding reencrypted board value and decrypt it
+    // const tokenAlice = this.instances.alice.getTokenSignature(this.contractAddress)!;
+    // const encryptedBoardValueAlice = await this.contract.connect(this.signers.alice).getBoardValue(
+    //   this.last_game_id,0,0,tokenAlice.publicKey, tokenAlice.signature
+    // );
+    // const boardValueAlice = this.instances.alice.decrypt(this.contractAddress, encryptedBoardValueAlice);
+    // expect(boardValueAlice).to.equal(HOUSE-1);
+
+    // let bob play so as to return back to alice
+    await this.bob_builds_at(HOUSE, 0,0);    
+
+    // // check if prevent to build something onto a non empty spot
+    // transaction = await createTransaction(
+    //   this.contract.connect(this.signers.alice).build, this.last_game_id, 0, 0, building_type_minus_1
+    // );
+    // await expect(transaction.wait()).to.be.revertedWith(
+
+    // // check if prevent to build something if there is not a building below
+    // transaction = await createTransaction(
+    //   this.contract.connect(this.signers.alice).build, this.last_game_id, 2, 0, building_type_minus_1
+    // );
+    // await expect(transaction.wait()).to.be.revertedWith(
+    //   "The cell below must be built"
+    // );  
+
+    // // check if can build something right above
+    // transaction = await createTransaction(
+    //   this.contract.connect(this.signers.alice).build, this.last_game_id, 2, 0, building_type_minus_1
+    // );
+    // await expect(transaction.wait()).to.be.revertedWith(
+    //   "The cell below must be built"
+    // );  
+
   });
 
+  it.only("should allow to send a missile", async function () {
 
-  // it("should mint the contract", async function () {
-  //   // const encryptedAmount = this.instances.alice.encrypt32(1000);
-  //   // const transaction = await createTransaction(this.contract.mint, encryptedAmount);
-  //   // await transaction.wait();
-  //   // // Call the method
-  //   // const token = this.instances.alice.getTokenSignature(this.contractAddress) || {
-  //   //   signature: "",
-  //   //   publicKey: "",
-  //   // };
-  //   // const encryptedBalance = await this.contract.balanceOf(token.publicKey, token.signature);
-  //   // // Decrypt the balance
-  //   // const balance = this.instances.alice.decrypt(this.contractAddress, encryptedBalance);
-  //   // expect(balance).to.equal(1000);
+    await this.create_game(3, 5);
 
-  //   // const encryptedTotalSupply = await this.contract.getTotalSupply(token.publicKey, token.signature);
-  //   // // Decrypt the total supply
-  //   // const totalSupply = this.instances.alice.decrypt(this.contractAddress, encryptedTotalSupply);
-  //   // expect(totalSupply).to.equal(1000);
-  // });
+    let game = await this.contract.games(this.last_game_id);
+    expect(game[7]).to.equal(true);
 
-  // it("should transfer tokens between two users", async function () {
-  //   const encryptedAmount = this.instances.alice.encrypt32(10000);
-  //   const transaction = await createTransaction(this.contract.mint, encryptedAmount);
-  //   await transaction.wait();
+    // build a bunker
+    await this.alice_builds_at(BUNKER, 0,0);
 
-  //   const encryptedTransferAmount = this.instances.alice.encrypt32(1337);
-  //   const tx = await createTransaction(
-  //     this.contract["transfer(address,bytes)"],
-  //     this.signers.bob.address,
-  //     encryptedTransferAmount,
-  //   );
-  //   await tx.wait();
+    // let bob play so as to return back to alice
+    await this.bob_builds_at(HOUSE, 0,0);
 
-  //   const tokenAlice = this.instances.alice.getTokenSignature(this.contractAddress)!;
+    // build house
+    await this.alice_builds_at(HOUSE, 1,0);  
 
-  //   const encryptedBalanceAlice = await this.contract.balanceOf(tokenAlice.publicKey, tokenAlice.signature);
+    // bob sends a missile to the column 0:
+    await this.bob_sends_missile_at(0);
 
-  //   // Decrypt the balance
-  //   const balanceAlice = this.instances.alice.decrypt(this.contractAddress, encryptedBalanceAlice);
+    // // check that alice's house was destroyed and that she can see where the missile hit
+    // let missile_hit, missile_hit_at_row_plus1, missile_hit_at_column;
+    // [missile_hit, missile_hit_at_row_plus1, missile_hit_at_column] = await this.contract.getMissileHit(this.last_game_id);
+    // expect(missile_hit).to.equal(true);    
+    // expect(missile_hit_at_row_plus1).to.equal(1);    
+    // expect(missile_hit_at_column).to.equal(0);    
 
-  //   expect(balanceAlice).to.equal(10000 - 1337);
+    // // alice plays again, rebulding a destroyed house
+    // await this.alice_builds_at(HOUSE, 1,0);
 
-  //   const bobErc20 = this.contract.connect(this.signers.bob);
+    // // check that bob cannot send a missile
+    // game = await this.contract.games(this.last_game_id);
+    // expect(game[7]).to.equal(false);
 
-  //   const tokenBob = this.instances.bob.getTokenSignature(this.contractAddress)!;
+    // // and check that bob sees that no missile hit him
+    // [missile_hit_at_row_plus1, missile_hit_at_column] = await this.contract.getMissileHit(this.last_game_id);
+    // expect(missile_hit).to.equal(false); 
+    // expect(missile_hit_at_row_plus1).to.equal(0);
+    // expect(missile_hit_at_column).to.equal(0);
 
-  //   const encryptedBalanceBob = await bobErc20.balanceOf(tokenBob.publicKey, tokenBob.signature);
+    // // check if prevents to send two missiles in a row
+    // // await expect(this.bob_sends_missile_at(0)).to.be.revertedWith(
+    // //   "Cannot send two missiles in a row"
+    // // );  
+  });  
 
-  //   // Decrypt the balance
-  //   const balanceBob = this.instances.bob.decrypt(this.contractAddress, encryptedBalanceBob);
 
-  //   expect(balanceBob).to.equal(1337);
-  // });
 });
