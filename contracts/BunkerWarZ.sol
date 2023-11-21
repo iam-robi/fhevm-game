@@ -55,7 +55,7 @@ contract BunkerWarZ {
 
     // Event to notify when a new game is created
     event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address player1, address player2);
-    event BuildingPlaced(uint8 row, uint8 column, bool is_player1);
+    event BuildingPlaced(uint8 row, uint8 column, bool is_player1, bytes encrypted_type_m1_private_key);
     event MissileHit(uint8 row, uint8 column, bool opponent_is_player1);
     event GameEnded(GameState game_end_state);
 
@@ -148,7 +148,14 @@ contract BunkerWarZ {
     // Build either a house or a bunker, the location is clear but the building type is encrypted
     // A house gives 1 point, and a bunker securizes all houses bellow it on the column
     // encrypted_type_m1: encrypted type minus 1, so 0 for a house and 1 for a bunker
-    function build(uint game_id, uint8 row, uint8 column, bytes calldata encrypted_type_m1) public onlyPlayers(game_id) {
+    // encrypted_type_m1_private_key: encrypted_type_m1 under private key encryption, to store in the event so as
+    // to rebuild the UI part of the game in another session if required
+    function build( uint game_id,
+                    uint8 row,
+                    uint8 column,
+                    bytes calldata encrypted_type_m1,
+                    bytes calldata encrypted_type_m1_private_key)
+        public onlyPlayers(game_id) {
 
         // start turn
         Game storage game;
@@ -181,7 +188,7 @@ contract BunkerWarZ {
         }
 
         // emit event, the location of the building is known
-        emit BuildingPlaced(row, column, player1_plays);
+        emit BuildingPlaced(row, column, player1_plays, encrypted_type_m1_private_key);
         
         _end_turn(game);
     }

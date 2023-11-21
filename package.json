@@ -90,6 +90,8 @@
     "fhevm:faucet:dave": "docker exec -i fhevm faucet $(npx hardhat task:getEthereumAddressDave)"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^4.9.2"
+    "@openzeppelin/contracts": "^4.9.2",
+    "@poanet/solidity-flattener": "^3.0.9",
+    "flatten": "^1.0.3"
   }
 }

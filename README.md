@@ -11,6 +11,12 @@ pnpm install
 pnpm compile
 ```
 
+## Flatten contract
+```bash
+cd contracts
+./node_modules/.bin/poa-solidity-flattener ./contracts/BunkerWarZ.sol
+```
+
 ## test contract
 In a terminal run: 
 ```bash
