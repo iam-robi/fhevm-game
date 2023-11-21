@@ -2,11 +2,11 @@
 
 pragma solidity >=0.8.13 <0.9.0;
 
-import "fhevm/lib/TFHE.sol";
 import "hardhat/console.sol";
+import "fhevm/lib/TFHE.sol";
+import "fhevm/abstracts/EIP712WithModifier.sol";
 
-
-contract BunkerWarZ {
+contract BunkerWarZ is EIP712WithModifier{
 
     // Enum to represent the current state of the game
     enum GameState {
@@ -28,8 +28,12 @@ contract BunkerWarZ {
         uint8 board_height;
         uint8 turns;
 
-        // Booleans
+        // GameState
         GameState game_state;
+
+        // Booleans
+        bool player1_can_send_missile; // prevent sending two missiles in a row
+        bool player2_can_send_missile;        
 
         // Numbers of houses built by players
         euint8 player1_houses;
@@ -55,7 +59,7 @@ contract BunkerWarZ {
 
     // Event to notify when a new game is created
     event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address player1, address player2);
-    event BuildingPlaced(uint8 row, uint8 column, bool is_player1, bytes encrypted_type_m1_private_key);
+    event BuildingPlaced(uint8 row, uint8 column, bool is_player1);
     event MissileHit(uint8 row, uint8 column, bool opponent_is_player1);
     event GameEnded(GameState game_end_state);
 
@@ -64,8 +68,21 @@ contract BunkerWarZ {
         _;
     }
 
-    constructor() {
-    }
+    constructor() EIP712WithModifier("Bunker War Z", "1.0") {}
+
+    // Get some value of an encrypted board (if the player needs to rebuild his game state)
+    function get_board_value(uint game_id, uint8 row, uint8 column, bytes32 publicKey, bytes calldata signature)
+                            public view onlySignedPublicKey(publicKey, signature) returns (bytes memory){
+        Game storage game = games[game_id];
+        require(row <= game.board_height && column <= game.board_width, "row or column is out of board's dimensions");
+        if (msg.sender == game.player1){
+            return TFHE.reencrypt(game.player1_board[row][column], publicKey, EMPTY);
+        }else if(msg.sender == game.player2){
+            return TFHE.reencrypt(game.player2_board[row][column], publicKey, EMPTY);
+        }else{
+            revert("Only players of the game can get board values");
+        }
+    }    
 
     // Create a new game
     function new_game(uint8 _board_width, uint8 _board_height, address _player1, address _player2) public {
@@ -80,6 +97,8 @@ contract BunkerWarZ {
         newGame.game_state = GameState.PLAYER1_TURN; // player 1 starts
         newGame.board_width = _board_width;
         newGame.board_height = _board_height;
+        newGame.player1_can_send_missile = true;
+        newGame.player2_can_send_missile = true;
 
         emit NewGameCreated(new_game_id, _board_width, _board_height, _player1, _player2);
 
@@ -139,7 +158,7 @@ contract BunkerWarZ {
         }
     }
 
-    /// check wether some FHE euint8 value was initilized and decrypt it or return EMPTY
+    /// check whether some FHE euint8 value was initilized and decrypt it or return EMPTY
     function _empty_or_value(euint8 decrypt_value) internal view returns (uint8) {
         uint8 value = TFHE.isInitialized(decrypt_value) ? TFHE.decrypt(decrypt_value) : EMPTY;
         return value;
@@ -153,8 +172,7 @@ contract BunkerWarZ {
     function build( uint game_id,
                     uint8 row,
                     uint8 column,
-                    bytes calldata encrypted_type_m1,
-                    bytes calldata encrypted_type_m1_private_key)
+                    bytes calldata encrypted_type_m1)
         public onlyPlayers(game_id) {
 
         // start turn
@@ -179,16 +197,19 @@ contract BunkerWarZ {
         }
        
         // assign the new value, and increment the house counter if it is a house
+        // also, after building something, the player can send a missile again
         euint8 building_type = TFHE.add((TFHE.asEuint8(TFHE.asEbool(encrypted_type_m1))) , TFHE.asEuint8(1));
         board[row][column] = building_type;
         if (player1_plays) {
             game.player1_houses = TFHE.add(game.player1_houses, TFHE.asEuint8(TFHE.eq(building_type, TFHE.asEuint8(1))));
+            game.player1_can_send_missile = true;
         } else {
             game.player2_houses = TFHE.add(game.player2_houses, TFHE.asEuint8(TFHE.eq(building_type, TFHE.asEuint8(1))));
+            game.player2_can_send_missile = true;
         }
 
         // emit event, the location of the building is known
-        emit BuildingPlaced(row, column, player1_plays, encrypted_type_m1_private_key);
+        emit BuildingPlaced(row, column, player1_plays);        
         
         _end_turn(game);
     }
@@ -196,12 +217,16 @@ contract BunkerWarZ {
     // Or, send a missile toward one of the columns of the opponent
     // The missile will destroy all houses of the column untill it reaches a bunker
     // All constructions below the bunker will stay hidden
-    function sendMissile(uint game_id, uint8 column) public onlyPlayers(game_id) {
+    function send_missile(uint game_id, uint8 column) public onlyPlayers(game_id) {
         
         // start turn
         Game storage game;
         bool player1_plays;
         (game, player1_plays) = _start_turn(game_id);
+
+        // check that the player can send a missile
+        require( (player1_plays && game.player1_can_send_missile) || (!player1_plays && game.player2_can_send_missile),
+            "Cannot send two missiles in a row" );
 
         // select the board of the opponent
         mapping(uint8 => mapping(uint8 => euint8)) storage target_board = (player1_plays)? game.player2_board: game.player1_board;
@@ -214,7 +239,7 @@ contract BunkerWarZ {
                 break;
             }else if(cell == HOUSE){
                 // decrease opponent score and destroy the house if there is an unprotected house, and continue
-                if (msg.sender == game.player1) {
+                if (player1_plays) {
                     game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(1));
                 } else {
                     game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(1));
@@ -230,6 +255,13 @@ contract BunkerWarZ {
         // Hit row = row_plus_one-1, this will happen if there was a bunker
         // row_plus_one=0 means the column was empty
         emit MissileHit(row_plus_one, column, player1_plays);
+
+        // after sending a missile, a player must build something in order to be able to send another one:
+        if (player1_plays) {
+            game.player1_can_send_missile = false;
+        } else {
+            game.player2_can_send_missile = false;
+        }
 
         _end_turn(game);
     }    
