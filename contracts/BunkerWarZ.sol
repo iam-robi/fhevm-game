@@ -148,7 +148,7 @@ contract BunkerWarZ {
     // Build either a house or a bunker, the location is clear but the building type is encrypted
     // A house gives 1 point, and a bunker securizes all houses bellow it on the column
     // encrypted_type_m1: encrypted type minus 1, so 0 for a house and 1 for a bunker
-    function build(uint game_id, uint8 row, uint8 column, bytes calldata encrypted_type_m1) public{ // onlyPlayers(game_id) {
+    function build(uint game_id, uint8 row, uint8 column, bytes calldata encrypted_type_m1) public onlyPlayers(game_id) {
 
         // start turn
         Game storage game;
