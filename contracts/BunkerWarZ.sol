@@ -8,16 +8,6 @@ import "fhevm/abstracts/EIP712WithModifier.sol";
 
 contract BunkerWarZ is EIP712WithModifier{
 
-    // Enum to represent the current state of the game
-    enum GameState {
-        UNINITIALIZED,
-        PLAYER1_TURN,
-        PLAYER2_TURN,
-        PLAYER1_WON,
-        PLAYER2_WON,
-        TIE
-    }
-
     struct Game {
         // Addresses
         address player1;
@@ -29,7 +19,7 @@ contract BunkerWarZ is EIP712WithModifier{
         uint8 turns;
 
         // GameState
-        GameState game_state;
+        uint8 game_state;
 
         // Booleans
         bool player1_can_send_missile; // prevent sending two missiles in a row
@@ -51,19 +41,32 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => euint8)) player2_board;
     }
 
+    // Values to represent cell contents
     uint8 constant EMPTY = 0;
     uint8 constant HOUSE = 1;
     uint8 constant BUNKER = 2;
 
+    // Values of min and max board dimensions
     uint8 constant MIN_COLUMNS = 1;
-    uint8 constant MAX_COLUMNS = 10;
-    uint8 constant MIN_ROWS = 3;
-    uint8 constant MAX_ROWS = 10;
+    uint8 constant MAX_COLUMNS = 6;
+    uint8 constant MIN_ROWS = 2;
+    uint8 constant MAX_ROWS = 6;
 
+    // Values to represent the current state of the game
+    uint8 constant UNINITIALIZED = 0;
+    uint8 constant PLAYER1_TURN = 1;
+    uint8 constant PLAYER2_TURN = 2;
+    uint8 constant PLAYER1_WON = 3;
+    uint8 constant PLAYER2_WON = 4;
+    uint8 constant TIE = 5;
+
+    // Values to avoid trivial encryption every time
     euint8 ENCRYPTED_ONE;
     euint8 ENCRYPTED_EMPTY;
     euint8 ENCRYPTED_HOUSE;
     euint8 ENCRYPTED_BUNKER;
+
+    uint8 public clear_game_result_;
 
     // Mapping to store games by their IDs
     mapping(uint => Game) public games;
@@ -73,7 +76,7 @@ contract BunkerWarZ is EIP712WithModifier{
     event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address player1, address player2);
     event BuildingPlaced(uint8 row, uint8 column, bool is_player1);
     event MissileHit(uint8 row, uint8 column, bool opponent_is_player1);
-    event GameEnded(GameState game_end_state);
+    event GameEnded(uint8 game_end_state);
 
     modifier onlyPlayers(uint game_id) {
         require(
@@ -127,7 +130,7 @@ contract BunkerWarZ is EIP712WithModifier{
         Game storage new_game = games[new_game_id];
         new_game.player1 = _player1;
         new_game.player2 = _player2;
-        new_game.game_state = GameState.PLAYER1_TURN; // player 1 starts
+        new_game.game_state = PLAYER1_TURN; // player 1 starts
         new_game.board_width = _board_width;
         new_game.board_height = _board_height;
         new_game.player1_can_send_missile = true;
@@ -145,13 +148,13 @@ contract BunkerWarZ is EIP712WithModifier{
         Game storage game = games[game_id];
         bool player1_plays;
 
-        if(game.game_state == GameState.PLAYER1_TURN && msg.sender == game.player1){
+        if(game.game_state == PLAYER1_TURN && msg.sender == game.player1){
             player1_plays = true;
-        }else if (game.game_state == GameState.PLAYER2_TURN && msg.sender == game.player2){
+        }else if (game.game_state == PLAYER2_TURN && msg.sender == game.player2){
             player1_plays = false;
         }else{
             // either the game is not ongoing
-            require(game.game_state != GameState.UNINITIALIZED && game.game_state < GameState.PLAYER1_WON,
+            require(game.game_state != UNINITIALIZED && game.game_state < PLAYER1_WON,
                 "Game either has ended or does not exist");
             // or, the player is not the right one for this turn
             revert("Not your turn");
@@ -159,37 +162,45 @@ contract BunkerWarZ is EIP712WithModifier{
         return (game, player1_plays);
     } 
 
+    // check whether a value was initialized or not, and return
+    function _valueOrZero(euint8 value) pure internal returns (euint8) {
+        return TFHE.isInitialized(value)? value: TFHE.asEuint8(0);
+    }
+
     // End a turn
     function _endTurn(Game storage game) internal {
-        if(game.game_state == GameState.PLAYER1_TURN){
+        if(game.game_state == PLAYER1_TURN){
             // change to player2
-            game.game_state = GameState.PLAYER2_TURN;
+            game.game_state = PLAYER2_TURN;
         }
-        else if(game.game_state == GameState.PLAYER2_TURN){
+        else if(game.game_state == PLAYER2_TURN){
             // increment turns after player 2 plays
             game.turns++;
             // end game if game.max_turns is reached
             if (game.turns == game.board_height*game.board_width){
 
-                // keep either GameState.PLAYER1_WON, GameState.PLAYER2_WON or GameState.TIE in encrypted_game_result
-                ebool player_1_ge = TFHE.ge(game.player1_houses, game.player2_houses);
+                // keep either PLAYER1_WON, PLAYER2_WON or TIE in game_result
+                euint8 houses_1 = _valueOrZero(game.player1_houses);
+                euint8 houses_2 = _valueOrZero(game.player2_houses);
+
+                ebool player_1_ge = TFHE.ge(houses_1, houses_2);
                 ebool tie = TFHE.eq(game.player1_houses, game.player2_houses);
 
-                euint8 encrypted_game_result = TFHE.cmux(
+                euint8 game_result = TFHE.cmux(
                     player_1_ge,
-                    TFHE.asEuint8(uint8(GameState.PLAYER1_WON)),
-                    TFHE.asEuint8(uint8(GameState.PLAYER2_WON))
+                    TFHE.asEuint8(PLAYER1_WON),
+                    TFHE.asEuint8(PLAYER2_WON)
                 );
-                encrypted_game_result = TFHE.cmux(tie, TFHE.asEuint8(uint8(GameState.TIE)), encrypted_game_result);
+                game_result = TFHE.cmux(tie, TFHE.asEuint8(TIE), game_result);
 
-                // decrypt encrypted_game_result, save it and emit GameEnded event
-                uint8 clear_game_result = TFHE.decrypt(encrypted_game_result);
-                game.game_state = GameState(clear_game_result);
+                // decrypt game_result, save it and emit GameEnded event
+                game.game_state = TFHE.decrypt(game_result);
                 emit GameEnded(game.game_state);
-                return;
             }
-            // also, change to player1
-            game.game_state = GameState.PLAYER1_TURN;
+            else{
+                // also, change to player1
+                game.game_state = PLAYER1_TURN;
+            }
         }
         else{
             revert("Should not call _endTurn if the game is not ongoing");
@@ -199,8 +210,7 @@ contract BunkerWarZ is EIP712WithModifier{
 
     // Build either a house or a bunker, the location is clear but the building type is encrypted
     // A house gives 1 point, and a bunker securizes all houses bellow it on the column
-    // encrypted_type_m1: encrypted type minus 1, so 0 for a house and 1 for a bunker
-    // encrypted_type_m1_private_key: encrypted_type_m1 under private key encryption, to store in the event so as
+    // encrypted_type_m1: encrypted type minus 1, so 0 for a house and 1 for a bunker (the boolean value ensures we don't provide any other value)
     // to rebuild the UI part of the game in another session if required
     function build( uint game_id, uint8 row, uint8 column, bytes calldata encrypted_type_m1) public onlyPlayers(game_id) {
 
@@ -210,7 +220,7 @@ contract BunkerWarZ is EIP712WithModifier{
         (game, player1_plays) = _startTurn(game_id);
 
         // check row and column
-        require(row <= game.board_height && column <= game.board_width, "row or column is out of board's dimensions");
+        require(row < game.board_height && column < game.board_width, "row or column is out of board's dimensions");
 
         // select player's board
         mapping(uint8 => mapping(uint8 => euint8)) storage board = (player1_plays)? game.player1_board: game.player2_board;
@@ -303,7 +313,8 @@ contract BunkerWarZ is EIP712WithModifier{
         // signal where the missile has hit
         // Hit row = hit_row_plus_one-1, this will happen if there was a bunker
         // hit_row_plus_one=0 means the column was empty
-        emit MissileHit(TFHE.decrypt(hit_row_plus_one), column, player1_plays);
+        uint8 missile_hit_at_row_plus1= TFHE.decrypt(hit_row_plus_one);
+        emit MissileHit(missile_hit_at_row_plus1, column, player1_plays);
 
         // after sending a missile, a player must build something in order to be able to send another one:
         if (player1_plays) {
@@ -315,7 +326,7 @@ contract BunkerWarZ is EIP712WithModifier{
         // TODO: remove this when event can be querried
         // also store the missile hit in the gamestate untill event can be querried
         game.missile_hit = true;
-        game.missile_hit_at_row_plus1 = row_plus_one;
+        game.missile_hit_at_row_plus1 = missile_hit_at_row_plus1;
         game.missile_hit_at_column = column;
 
         _endTurn(game);
