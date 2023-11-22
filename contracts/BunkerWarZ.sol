@@ -41,18 +41,20 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => euint8)) player2_board;
     }
 
-    // Values to represent cell contents
-    uint8 constant EMPTY = 0;
-    uint8 constant HOUSE = 1;
-    uint8 constant BUNKER = 2;
-
     // Values of min and max board dimensions
     uint8 constant MIN_COLUMNS = 1;
     uint8 constant MAX_COLUMNS = 6;
     uint8 constant MIN_ROWS = 2;
     uint8 constant MAX_ROWS = 6;
 
+    // Values to represent cell contents
+    // (using uint8 instead of enum here is better for TFHE compatibility)
+    uint8 constant EMPTY = 0;
+    uint8 constant HOUSE = 1;
+    uint8 constant BUNKER = 2;
+
     // Values to represent the current state of the game
+    // (using uint8 instead of enum here is better for TFHE compatibility)    
     uint8 constant UNINITIALIZED = 0;
     uint8 constant PLAYER1_TURN = 1;
     uint8 constant PLAYER2_TURN = 2;
@@ -60,11 +62,8 @@ contract BunkerWarZ is EIP712WithModifier{
     uint8 constant PLAYER2_WON = 4;
     uint8 constant TIE = 5;
 
-    // Values to avoid trivial encryption every time
-    euint8 ENCRYPTED_ONE;
+    // Value to avoid trivial encryption every time
     euint8 ENCRYPTED_EMPTY;
-    euint8 ENCRYPTED_HOUSE;
-    euint8 ENCRYPTED_BUNKER;
 
     uint8 public clear_game_result_;
 
@@ -87,10 +86,7 @@ contract BunkerWarZ is EIP712WithModifier{
     }
 
     constructor() EIP712WithModifier("Authorization token", "1") {
-        ENCRYPTED_ONE = TFHE.asEuint8(1);
         ENCRYPTED_EMPTY = TFHE.asEuint8(EMPTY);
-        ENCRYPTED_HOUSE = TFHE.asEuint8(HOUSE);
-        ENCRYPTED_BUNKER = TFHE.asEuint8(BUNKER);
     }
 
     // Get some value of an encrypted board (if the player needs to rebuild his game state)
@@ -228,12 +224,12 @@ contract BunkerWarZ is EIP712WithModifier{
         // check that the cell is empty
         euint8 encrypted_cell = board[row][column];
         if (TFHE.isInitialized(encrypted_cell)){
-            ebool cell_ok = TFHE.eq(encrypted_cell, ENCRYPTED_EMPTY);
+            ebool cell_ok = TFHE.eq(encrypted_cell, EMPTY);
             // check that there is something built under the cell if row is >0
             if(row > 0){
                 // in this case, the cell below is necessarily initialized
                 // check that it is not empty
-                ebool cell_below_built = TFHE.ne(board[row-1][column], ENCRYPTED_EMPTY);
+                ebool cell_below_built = TFHE.ne(board[row-1][column], EMPTY);
                 cell_ok = TFHE.and(cell_ok, cell_below_built);
             }
             require(TFHE.decrypt(cell_ok), "The cell is already built or the cell below is not built");
@@ -241,13 +237,13 @@ contract BunkerWarZ is EIP712WithModifier{
 
         // assign the new value, and increment the house counter if it is a house
         // also, after building something, the player can send a missile again
-        euint8 building_type = TFHE.add((TFHE.asEuint8(TFHE.asEbool(encrypted_type_m1))) , ENCRYPTED_ONE);
+        euint8 building_type = TFHE.add((TFHE.asEuint8(TFHE.asEbool(encrypted_type_m1))) , 1);
         board[row][column] = building_type;
         if (player1_plays) {
-            game.player1_houses = TFHE.add(game.player1_houses, TFHE.asEuint8(TFHE.eq(building_type, ENCRYPTED_ONE)));
+            game.player1_houses = TFHE.add(game.player1_houses, TFHE.asEuint8(TFHE.eq(building_type, 1)));
             game.player1_can_send_missile = true;
         } else {
-            game.player2_houses = TFHE.add(game.player2_houses, TFHE.asEuint8(TFHE.eq(building_type, ENCRYPTED_ONE)));
+            game.player2_houses = TFHE.add(game.player2_houses, TFHE.asEuint8(TFHE.eq(building_type, 1)));
             game.player2_can_send_missile = true;
         }
 
@@ -288,16 +284,16 @@ contract BunkerWarZ is EIP712WithModifier{
             euint8 encrypted_cell = target_board[row_plus_one-1][column];
             // continue if the cell is not initiliazed
             if(TFHE.isInitialized(encrypted_cell)){
-                ebool cell_is_bunker = TFHE.eq(encrypted_cell, ENCRYPTED_BUNKER);
-                // compute wheter this is the first bunker seen
+                ebool cell_is_bunker = TFHE.eq(encrypted_cell, BUNKER);
+                // // compute wheter this is the first bunker seen
                 ebool cell_is_first_bunker = TFHE.and(cell_is_bunker, bunker_not_seen);
-                // if the cell is the first bunker seen, keep its row (+1) in hit_row_plus_one:
+                // // if the cell is the first bunker seen, keep its row (+1) in hit_row_plus_one:
                 hit_row_plus_one = TFHE.cmux(cell_is_first_bunker, TFHE.asEuint8(row_plus_one), hit_row_plus_one);
-                // update whether we saw a bunker
-                bunker_not_seen = TFHE.and(TFHE.not(cell_is_bunker),bunker_not_seen);
+                // // update whether we saw a bunker
+                bunker_not_seen = TFHE.and(TFHE.not(cell_is_bunker), bunker_not_seen);
 
                 // decrease opponent score and destroy the house if the cell is an unprotected house, and continue
-                ebool cell_is_house = TFHE.eq(encrypted_cell, ENCRYPTED_HOUSE);
+                ebool cell_is_house = TFHE.eq(encrypted_cell, HOUSE);
                 ebool cell_is_unprotected_house = TFHE.and(cell_is_house, bunker_not_seen);
                 if (player1_plays) {
                     game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(cell_is_unprotected_house));
