@@ -72,7 +72,7 @@ contract BunkerWarZ is EIP712WithModifier{
     uint public new_game_id;
 
     // Event to notify when a new game is created
-    event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address player1, address player2);
+    event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address indexed player1, address indexed player2);
     event BuildingPlaced(uint8 row, uint8 column, bool is_player1);
     event MissileHit(uint8 row, uint8 column, bool opponent_is_player1);
     event GameEnded(uint8 game_end_state);
