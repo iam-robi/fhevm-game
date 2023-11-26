@@ -73,9 +73,9 @@ contract BunkerWarZ is EIP712WithModifier{
 
     // Event to notify when a new game is created
     event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address indexed player1, address indexed player2);
-    event BuildingPlaced(uint8 row, uint8 column, bool is_player1);
-    event MissileHit(uint8 row, uint8 column, bool opponent_is_player1);
-    event GameEnded(uint8 game_end_state);
+    event BuildingPlaced(uint8 row, uint8 column, bool is_player1, uint indexed gameId);
+    event MissileHit(uint8 row, uint8 column, bool opponent_is_player1, uint indexed gameId);
+    event GameEnded(uint8 game_end_state, uint indexed gameId);
 
     modifier onlyPlayers(uint game_id) {
         require(
@@ -164,7 +164,7 @@ contract BunkerWarZ is EIP712WithModifier{
     }
 
     // End a turn
-    function _endTurn(Game storage game) internal {
+    function _endTurn(Game storage game, uint game_id) internal {
         if(game.game_state == PLAYER1_TURN){
             // change to player2
             game.game_state = PLAYER2_TURN;
@@ -191,7 +191,7 @@ contract BunkerWarZ is EIP712WithModifier{
 
                 // decrypt game_result, save it and emit GameEnded event
                 game.game_state = TFHE.decrypt(game_result);
-                emit GameEnded(game.game_state);
+                emit GameEnded(game.game_state, game_id);
             }
             else{
                 // also, change to player1
@@ -248,7 +248,7 @@ contract BunkerWarZ is EIP712WithModifier{
         }
 
         // emit event, the location of the building is known
-        emit BuildingPlaced(row, column, player1_plays);      
+        emit BuildingPlaced(row, column, player1_plays, game_id);      
 
         // TODO: remove this when event can be querried
         // also reset the missile hit values in the gamestate untill event can be querried
@@ -256,7 +256,7 @@ contract BunkerWarZ is EIP712WithModifier{
         game.missile_hit_at_row_plus1 = 0;
         game.missile_hit_at_column = 0;
         
-        _endTurn(game);
+        _endTurn(game, game_id);
     }
 
     // Or, send a missile toward one of the columns of the opponent
@@ -310,7 +310,7 @@ contract BunkerWarZ is EIP712WithModifier{
         // Hit row = hit_row_plus_one-1, this will happen if there was a bunker
         // hit_row_plus_one=0 means the column was empty
         uint8 missile_hit_at_row_plus1= TFHE.decrypt(hit_row_plus_one);
-        emit MissileHit(missile_hit_at_row_plus1, column, player1_plays);
+        emit MissileHit(missile_hit_at_row_plus1, column, player1_plays, game_id);
 
         // after sending a missile, a player must build something in order to be able to send another one:
         if (player1_plays) {
@@ -325,6 +325,6 @@ contract BunkerWarZ is EIP712WithModifier{
         game.missile_hit_at_row_plus1 = missile_hit_at_row_plus1;
         game.missile_hit_at_column = column;
 
-        _endTurn(game);
+        _endTurn(game, game_id);
     }    
 }
