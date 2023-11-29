@@ -112,6 +112,26 @@ contract BunkerWarZ is EIP712WithModifier{
             revert("Only players of the game can get board values");
         }
     }
+    
+    
+    function getOpponentBuildingStatus(uint gameId, uint8 row, uint8 column) public view returns (bool) {
+        Game storage game = games[gameId];
+
+        // Check if the sender is player1 or player2
+        bool isSenderPlayer1 = msg.sender == game.player1;
+        bool isSenderPlayer2 = msg.sender == game.player2;
+
+        require(isSenderPlayer1 || isSenderPlayer2, "Sender is not a player in this game");
+
+        // Return the opponent's building status
+        if (isSenderPlayer1) {
+            return game.player2_buildings[row][column];
+        } else {
+            return game.player1_buildings[row][column];
+        }
+    }
+
+
 
     // Get whether the missile hit and where untill event can be querried
     // TODO: remove this when event can be querried
