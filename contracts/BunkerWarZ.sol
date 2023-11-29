@@ -243,9 +243,10 @@ contract BunkerWarZ is EIP712WithModifier{
         // select player's board
         mapping(uint8 => mapping(uint8 => euint8)) storage board = (player1_plays)? game.player1_board: game.player2_board;
 
-        // check that the cell is empty
+        // check that the cell is empty and if row>0 that the cell below is built
         euint8 encrypted_cell = board[row][column];
         if (TFHE.isInitialized(encrypted_cell)){
+            // If the cell was initialized, it must have been destroyed to be empty again
             ebool cell_ok = TFHE.eq(encrypted_cell, EMPTY);
             // check that there is something built under the cell if row is >0
             if(row > 0){
@@ -255,7 +256,18 @@ contract BunkerWarZ is EIP712WithModifier{
                 cell_ok = TFHE.and(cell_ok, cell_below_built);
             }
             require(TFHE.decrypt(cell_ok), "The cell is already built or the cell below is not built");
-        }        
+        }else if(row > 0){
+            // If the cell is uninitialized, it is empty, so we just check the cell below
+            euint8 encrypted_cell_below = board[row-1][column];
+            if (TFHE.isInitialized(encrypted_cell_below)){
+                // if the cell below is initialized, check if it is not empty
+                ebool cell_below_built = TFHE.ne(encrypted_cell_below, EMPTY);
+                require(TFHE.decrypt(cell_below_built), "The cell below is not built");                            
+            }else{
+                // if the cell below is not initialized, it is empty
+                revert("The cell below must be built");
+            }           
+        }      
 
         // assign the new value, and increment the house counter if it is a house
         // also, after building something, the player can send a missile again
