@@ -29,7 +29,7 @@ contract BunkerWarZ is EIP712WithModifier{
         // these variables are used because the event cannot 
         // be queried for now on the tesnet, but the information is in the MissileHit events
         bool missile_hit;
-        uint8 missile_hit_at_row_plus1;
+        uint8 missile_hit_at_row_plus_1;
         uint8 missile_hit_at_column;
 
         // Numbers of houses built by players
@@ -39,6 +39,10 @@ contract BunkerWarZ is EIP712WithModifier{
         // Boards using mappings
         mapping(uint8 => mapping(uint8 => euint8)) player1_board;
         mapping(uint8 => mapping(uint8 => euint8)) player2_board;
+
+        // TODO: remove this when event can be querried
+        mapping(uint8 => mapping(uint8 => bool)) player1_buildings;
+        mapping(uint8 => mapping(uint8 => bool)) player2_buildings;        
     }
 
     // Values of min and max board dimensions
@@ -96,7 +100,7 @@ contract BunkerWarZ is EIP712WithModifier{
         uint8 column, 
         bytes32 publicKey, 
         bytes calldata signature)
-    public view onlySignedPublicKey(publicKey, signature) returns (bytes memory){
+    external view onlySignedPublicKey(publicKey, signature) returns (bytes memory){
         Game storage game = games[game_id];
         require(row <= game.board_height && column <= game.board_width,
             "row or column is out of board's dimensions");
@@ -113,7 +117,7 @@ contract BunkerWarZ is EIP712WithModifier{
     // TODO: remove this when event can be querried
     function getMissileHit(uint game_id) public view returns (bool, uint8, uint8){
         Game storage game = games[game_id];
-        return (game.missile_hit, game.missile_hit_at_row_plus1, game.missile_hit_at_column);
+        return (game.missile_hit, game.missile_hit_at_row_plus_1, game.missile_hit_at_column);
     }
 
     // Create a new game
@@ -250,11 +254,15 @@ contract BunkerWarZ is EIP712WithModifier{
         // emit event, the location of the building is known
         emit BuildingPlaced(row, column, player1_plays, game_id);      
 
-        // TODO: remove this when event can be querried
+        // TODO: remove this block when event can be querried
         // also reset the missile hit values in the gamestate untill event can be querried
         game.missile_hit = false;
-        game.missile_hit_at_row_plus1 = 0;
+        game.missile_hit_at_row_plus_1 = 0;
         game.missile_hit_at_column = 0;
+        // mark the building as built
+        mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
+        player_buildings[row][column] = true;
+        // End of TODO
         
         _endTurn(game, game_id);
     }
@@ -276,19 +284,19 @@ contract BunkerWarZ is EIP712WithModifier{
         // select the board of the opponent
         mapping(uint8 => mapping(uint8 => euint8)) storage target_board = (player1_plays)? game.player2_board: game.player1_board;
 
-        uint8 row_plus_one = game.board_height;
+        uint8 row_plus_1 = game.board_height;
         // save the row (+1) where the missile hits, 0 if never updated by cmux
-        euint8 hit_row_plus_one = TFHE.asEuint8(0);
+        euint8 hit_row_plus_1_enc = TFHE.asEuint8(0);
         ebool bunker_not_seen = TFHE.asEbool(true); // wether we did not come accross a bunker yet
-        while (row_plus_one > 0){
-            euint8 encrypted_cell = target_board[row_plus_one-1][column];
+        while (row_plus_1 > 0){
+            euint8 encrypted_cell = target_board[row_plus_1-1][column];
             // continue if the cell is not initiliazed
             if(TFHE.isInitialized(encrypted_cell)){
                 ebool cell_is_bunker = TFHE.eq(encrypted_cell, BUNKER);
                 // // compute wheter this is the first bunker seen
                 ebool cell_is_first_bunker = TFHE.and(cell_is_bunker, bunker_not_seen);
-                // // if the cell is the first bunker seen, keep its row (+1) in hit_row_plus_one:
-                hit_row_plus_one = TFHE.cmux(cell_is_first_bunker, TFHE.asEuint8(row_plus_one), hit_row_plus_one);
+                // // if the cell is the first bunker seen, keep its row (+1) in hit_row_plus_1_enc:
+                hit_row_plus_1_enc = TFHE.cmux(cell_is_first_bunker, TFHE.asEuint8(row_plus_1), hit_row_plus_1_enc);
                 // // update whether we saw a bunker
                 bunker_not_seen = TFHE.and(TFHE.not(cell_is_bunker), bunker_not_seen);
 
@@ -301,16 +309,16 @@ contract BunkerWarZ is EIP712WithModifier{
                     game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(cell_is_unprotected_house));
                 }
                 // empty the cell if it was destroyed
-                target_board[row_plus_one-1][column] = TFHE.cmux(cell_is_unprotected_house, ENCRYPTED_EMPTY, encrypted_cell);
+                target_board[row_plus_1-1][column] = TFHE.cmux(cell_is_unprotected_house, ENCRYPTED_EMPTY, encrypted_cell);
             }
-            row_plus_one--;
+            row_plus_1--;
         }
 
         // signal where the missile has hit
-        // Hit row = hit_row_plus_one-1, this will happen if there was a bunker
-        // hit_row_plus_one=0 means the column was empty
-        uint8 missile_hit_at_row_plus1= TFHE.decrypt(hit_row_plus_one);
-        emit MissileHit(missile_hit_at_row_plus1, column, player1_plays, game_id);
+        // Hit row = hit_row_plus_1_enc-1, this will happen if there was a bunker
+        // hit_row_plus_1_enc=0 means the column was empty
+        uint8 hit_at_row_plus_1= TFHE.decrypt(hit_row_plus_1_enc);
+        emit MissileHit(hit_at_row_plus_1, column, player1_plays, game_id);
 
         // after sending a missile, a player must build something in order to be able to send another one:
         if (player1_plays) {
@@ -319,11 +327,17 @@ contract BunkerWarZ is EIP712WithModifier{
             game.player2_can_send_missile = false;
         }
 
-        // TODO: remove this when event can be querried
+        // TODO: remove this block when event can be querried
         // also store the missile hit in the gamestate untill event can be querried
         game.missile_hit = true;
-        game.missile_hit_at_row_plus1 = missile_hit_at_row_plus1;
+        game.missile_hit_at_row_plus_1 = hit_at_row_plus_1;
         game.missile_hit_at_column = column;
+        // set houses to not built after they got destroyed
+        mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
+        for (uint8 i=hit_at_row_plus_1; i<game.board_height; i++){
+            player_buildings[i][column] = false;
+        }
+        // End of TODO
 
         _endTurn(game, game_id);
     }    
