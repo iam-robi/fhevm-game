@@ -25,7 +25,7 @@ contract BunkerWarZ is EIP712WithModifier{
         bool player1_can_send_missile; // prevent sending two missiles in a row
         bool player2_can_send_missile;  
 
-        // TODO: remove this when event can be querried
+        // TODO: remove this sub-graphs are available
         // these variables are used because the event cannot 
         // be queried for now on the tesnet, but the information is in the MissileHit events
         bool missile_hit;
@@ -40,7 +40,7 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => euint8)) player1_board;
         mapping(uint8 => mapping(uint8 => euint8)) player2_board;
 
-        // TODO: remove this when event can be querried
+        // TODO: remove this sub-graphs are available
         mapping(uint8 => mapping(uint8 => bool)) player1_buildings;
         mapping(uint8 => mapping(uint8 => bool)) player2_buildings;        
     }
@@ -93,6 +93,7 @@ contract BunkerWarZ is EIP712WithModifier{
         ENCRYPTED_EMPTY = TFHE.asEuint8(EMPTY);
     }
 
+    // TODO: remove this sub-graphs are available
     // Get some value of an encrypted board (if the player needs to rebuild his game state)
     function getBoardValue(
         uint game_id, 
@@ -113,8 +114,25 @@ contract BunkerWarZ is EIP712WithModifier{
         }
     }
 
+    // TODO: remove this sub-graphs are available
+    // Get the state "built or Not built" of cells of a player
+    function getBuildingStates(
+        uint game_id,
+        bool is_player1
+        ) external view returns (bool[] memory){
+        Game storage game = games[game_id];
+        mapping(uint8 => mapping(uint8 => bool)) storage buildings = (is_player1)? game.player1_buildings: game.player2_buildings;
+        bool[] memory building_states_array = new bool[](game.board_width*game.board_height);
+        for (uint8 i=0; i<game.board_width; i++){
+            for (uint8 j=0; j<game.board_height; j++){
+                building_states_array[i*game.board_height+j] = buildings[i][j];
+            }
+        }
+        return building_states_array;
+    }
+
     // Get whether the missile hit and where untill event can be querried
-    // TODO: remove this when event can be querried
+    // TODO: remove this sub-graphs are available
     function getMissileHit(uint game_id) public view returns (bool, uint8, uint8){
         Game storage game = games[game_id];
         return (game.missile_hit, game.missile_hit_at_row_plus_1, game.missile_hit_at_column);
@@ -254,7 +272,7 @@ contract BunkerWarZ is EIP712WithModifier{
         // emit event, the location of the building is known
         emit BuildingPlaced(row, column, player1_plays, game_id);      
 
-        // TODO: remove this block when event can be querried
+        // TODO: remove this block sub-graphs are available
         // also reset the missile hit values in the gamestate untill event can be querried
         game.missile_hit = false;
         game.missile_hit_at_row_plus_1 = 0;
@@ -327,7 +345,7 @@ contract BunkerWarZ is EIP712WithModifier{
             game.player2_can_send_missile = false;
         }
 
-        // TODO: remove this block when event can be querried
+        // TODO: remove this block sub-graphs are available
         // also store the missile hit in the gamestate untill event can be querried
         game.missile_hit = true;
         game.missile_hit_at_row_plus_1 = hit_at_row_plus_1;
