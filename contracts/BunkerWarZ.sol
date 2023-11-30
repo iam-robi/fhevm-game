@@ -8,6 +8,21 @@ import "fhevm/abstracts/EIP712WithModifier.sol";
 
 contract BunkerWarZ is EIP712WithModifier{
 
+    // Enum to represent the current state of the game
+    enum GameState{        
+        UNINITIALIZED,
+        PLAYER1_TURN,
+        PLAYER2_TURN,
+        GAME_ENDED
+    }
+
+    // Enum to represent the result of the game
+    enum GameResult{        
+        PLAYER1_WON,
+        PLAYER2_WON,
+        TIE
+    }    
+
     struct Game {
         // Addresses
         address player1;
@@ -19,7 +34,7 @@ contract BunkerWarZ is EIP712WithModifier{
         uint8 turns;
 
         // GameState
-        uint8 game_state;
+        GameState game_state;
 
         // TODO: remove this sub-graphs are available
         // prevent sending two missiles in a row
@@ -61,15 +76,6 @@ contract BunkerWarZ is EIP712WithModifier{
     uint8 constant HOUSE = 1;
     uint8 constant BUNKER = 2;
 
-    // Values to represent the current state of the game
-    // (using uint8 instead of enum here is better for TFHE compatibility)    
-    uint8 constant UNINITIALIZED = 0;
-    uint8 constant PLAYER1_TURN = 1;
-    uint8 constant PLAYER2_TURN = 2;
-    uint8 constant PLAYER1_WON = 3;
-    uint8 constant PLAYER2_WON = 4;
-    uint8 constant TIE = 5;
-
     // Value to avoid trivial encryption every time
     euint8 ENCRYPTED_EMPTY;
 
@@ -81,8 +87,8 @@ contract BunkerWarZ is EIP712WithModifier{
 
     // Events to notify when a new game is created or ended, and a turn played
     event NewGameCreated(uint indexed game_id, uint8 board_width, uint8 board_height, address indexed player1, address indexed player2);
-    event GameEnded(uint indexed game_id, uint8 game_end_state);
-    event TurnPlayed(uint indexed game_id, address indexed player, bool is_building, uint8 row, uint8 column, uint8 new_game_state);
+    event GameEnded(uint indexed game_id);
+    event TurnPlayed(uint indexed game_id, address indexed player, bool is_building, uint8 row, uint8 column, GameState new_game_state);
 
     modifier onlyPlayers(uint game_id) {
         require(
@@ -151,7 +157,7 @@ contract BunkerWarZ is EIP712WithModifier{
         Game storage new_game = games[new_game_id];
         new_game.player1 = _player1;
         new_game.player2 = _player2;
-        new_game.game_state = PLAYER1_TURN; // player 1 starts
+        new_game.game_state = GameState.PLAYER1_TURN; // player 1 starts
         new_game.board_width = _board_width;
         new_game.board_height = _board_height;
         new_game.player1_can_send_missile = true;
@@ -163,19 +169,43 @@ contract BunkerWarZ is EIP712WithModifier{
         new_game_id++;        
     }
 
+    // Get the result of a game after it ended
+    function getGameResult(uint game_id) external view returns (uint8){
+        Game storage game = games[game_id];
+
+        require(game.game_state == GameState.GAME_ENDED, "Game has not ended");
+
+        // keep either PLAYER1_WON, PLAYER2_WON or TIE in game_result
+        euint8 houses_1 = _valueOrZero(game.player1_houses);
+        euint8 houses_2 = _valueOrZero(game.player2_houses);
+
+        ebool player_1_ge = TFHE.ge(houses_1, houses_2);
+        ebool tie = TFHE.eq(game.player1_houses, game.player2_houses);
+
+        euint8 game_result = TFHE.cmux(
+            player_1_ge,
+            TFHE.asEuint8(uint8(GameResult.PLAYER1_WON)),
+            TFHE.asEuint8(uint8(GameResult.PLAYER2_WON))
+        );
+        game_result = TFHE.cmux(tie, TFHE.asEuint8(uint8(GameResult.TIE)), game_result);
+
+        // decrypt game_result and return it
+        return uint8(TFHE.decrypt(game_result));
+    }
+
     // Start a turn
     function _startTurn(uint game_id) internal view returns (bool){
         // load the game from storage:
         Game storage game = games[game_id];
         bool player1_plays;
 
-        if(game.game_state == PLAYER1_TURN && msg.sender == game.player1){
+        if(game.game_state == GameState.PLAYER1_TURN && msg.sender == game.player1){
             player1_plays = true;
-        }else if (game.game_state == PLAYER2_TURN && msg.sender == game.player2){
+        }else if (game.game_state == GameState.PLAYER2_TURN && msg.sender == game.player2){
             player1_plays = false;
         }else{
             // either the game is not ongoing
-            require(game.game_state != UNINITIALIZED && game.game_state < PLAYER1_WON,
+            require(game.game_state != GameState.UNINITIALIZED && game.game_state < GameState.GAME_ENDED,
                 "Game either has ended or does not exist");
             // or, the player is not the right one for this turn
             revert("Not your turn");
@@ -192,44 +222,26 @@ contract BunkerWarZ is EIP712WithModifier{
     function _endTurn(uint game_id) internal {
         // load the game from storage:
         Game storage game = games[game_id];
-        if(game.game_state == PLAYER1_TURN){
+        if(game.game_state == GameState.PLAYER1_TURN){
             // change to player2
-            game.game_state = PLAYER2_TURN;
+            game.game_state = GameState.PLAYER2_TURN;
         }
-        else if(game.game_state == PLAYER2_TURN){
+        else if(game.game_state == GameState.PLAYER2_TURN){
             // increment turns after player 2 plays
             game.turns++;
-            // end game if game.max_turns is reached
+            // if turns reaches max, end game
             if (game.turns == game.board_height*game.board_width){
-
-                // keep either PLAYER1_WON, PLAYER2_WON or TIE in game_result
-                euint8 houses_1 = _valueOrZero(game.player1_houses);
-                euint8 houses_2 = _valueOrZero(game.player2_houses);
-
-                ebool player_1_ge = TFHE.ge(houses_1, houses_2);
-                ebool tie = TFHE.eq(game.player1_houses, game.player2_houses);
-
-                euint8 game_result = TFHE.cmux(
-                    player_1_ge,
-                    TFHE.asEuint8(PLAYER1_WON),
-                    TFHE.asEuint8(PLAYER2_WON)
-                );
-                game_result = TFHE.cmux(tie, TFHE.asEuint8(TIE), game_result);
-
-                // decrypt game_result, save it and emit GameEnded event
-                game.game_state = TFHE.decrypt(game_result);
-                emit GameEnded(game_id, game.game_state);
-            }
-            else{
-                // also, change to player1
-                game.game_state = PLAYER1_TURN;
+                game.game_state = GameState.GAME_ENDED;
+                emit GameEnded(game_id);
+            }else{
+                // else, change to player1
+                game.game_state = GameState.PLAYER1_TURN;
             }
         }
         else{
             revert("Should not call _endTurn if the game is not ongoing");
         }
     }
-
 
     // Build either a house or a bunker, the location is clear but the building type is encrypted
     // A house gives 1 point, and a bunker securizes all houses bellow it on the column
@@ -239,8 +251,7 @@ contract BunkerWarZ is EIP712WithModifier{
 
         // start turn
         Game storage game = games[game_id];
-        bool player1_plays;
-        player1_plays = _startTurn(game_id);
+        bool player1_plays =  _startTurn(game_id);
 
         // check row and column
         require(row < game.board_height && column < game.board_width, "row or column is out of board's dimensions");
@@ -288,10 +299,7 @@ contract BunkerWarZ is EIP712WithModifier{
 
         // If the building is a bunker, update the last bunker row
         mapping(uint8 => euint8) storage bunker_row_plus_1 = (player1_plays)? game.p1_last_bunker_row_plus_1: game.p2_last_bunker_row_plus_1;
-        bunker_row_plus_1[column] = TFHE.cmux(TFHE.eq(encrypted_cell, BUNKER), TFHE.asEuint8(row+1), _valueOrZero(bunker_row_plus_1[column]));
-
-        // emit event, the location of the building is known
-        emit TurnPlayed(game_id, msg.sender, true, row, column, game.game_state);
+        bunker_row_plus_1[column] = TFHE.cmux(TFHE.eq(building_type, BUNKER), TFHE.asEuint8(row+1), _valueOrZero(bunker_row_plus_1[column]));
 
         // TODO: remove this block when sub-graphs are available
         // mark the building as built
@@ -303,6 +311,9 @@ contract BunkerWarZ is EIP712WithModifier{
         game.missile_sent_at_column = 0;
         // End of TODO
         
+        // emit event, the location of the building is known
+        emit TurnPlayed(game_id, msg.sender, true, row, column, game.game_state);        
+
         _endTurn(game_id);
     }
 
@@ -313,8 +324,7 @@ contract BunkerWarZ is EIP712WithModifier{
         
         // start turn
         Game storage game = games[game_id];
-        bool player1_plays;
-        player1_plays = _startTurn(game_id);
+        bool player1_plays = _startTurn(game_id);
 
         // check that the player can send a missile
         require( (player1_plays && game.player1_can_send_missile) || (!player1_plays && game.player2_can_send_missile),
@@ -329,21 +339,24 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => euint8)) storage opponent_board = (player1_plays)? game.player2_board: game.player1_board;
         mapping(uint8 => mapping(uint8 => bool)) storage opponent_buildings = (player1_plays)? game.player2_buildings: game.player1_buildings;
 
+        uint8 n_houses_destroyed = 0;
         for(uint8 i=stop_at_row_plus_1; i<game.board_height; i++){
-            if (opponent_buildings[i][column]){
-                if (player1_plays) {
-                    game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(TFHE.ne(opponent_board[i][column], ENCRYPTED_EMPTY)));
-                } else {
-                    game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(TFHE.ne(opponent_board[i][column], ENCRYPTED_EMPTY)));
-                }            
-                opponent_board[i][column] = ENCRYPTED_EMPTY;
-                opponent_buildings[i][column] = false;
-            }
+            if (!opponent_buildings[i][column]){
+                break; // break if there is no building built at upper rows
+            }            
+            n_houses_destroyed++;
+            opponent_board[i][column] = ENCRYPTED_EMPTY;
+            opponent_buildings[i][column] = false;
         }
 
-        // signal where the missile has stopped in the event
-        // stop_row_plus_1_enc=0 means the column was empty
-        emit TurnPlayed(game_id, msg.sender, false, stop_at_row_plus_1, column, game.game_state);
+        // we know how many houses where destroyed
+        if(n_houses_destroyed > 0){
+            if (player1_plays) {
+                game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(n_houses_destroyed));
+            } else {
+                game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(n_houses_destroyed));
+            }
+        }
 
         // after sending a missile, a player must build something in order to be able to send another one:
         if (player1_plays) {
@@ -357,6 +370,10 @@ contract BunkerWarZ is EIP712WithModifier{
         game.missile_stopped_at_row_plus_1 = stop_at_row_plus_1;
         game.missile_sent_at_column = column;        
         // End of TODO
+
+        // signal where the missile has stopped in the event
+        // stop_row_plus_1_enc=0 means the column was empty
+        emit TurnPlayed(game_id, msg.sender, false, stop_at_row_plus_1, column, game.game_state);        
 
         _endTurn(game_id);
     }    
