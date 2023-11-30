@@ -21,8 +21,9 @@ contract BunkerWarZ is EIP712WithModifier{
         // GameState
         uint8 game_state;
 
-        // Booleans
-        bool player1_can_send_missile; // prevent sending two missiles in a row
+        // TODO: remove this sub-graphs are available
+        // prevent sending two missiles in a row
+        bool player1_can_send_missile;
         bool player2_can_send_missile;  
 
         // Numbers of houses built by players
@@ -33,13 +34,19 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => euint8)) player1_board;
         mapping(uint8 => mapping(uint8 => euint8)) player2_board;
 
-        // Row (+1) of last bunker for each column using mappings
+        // Row (+1) of last bunker built (0 if none) for each column using mappings
         mapping(uint8 => euint8) p1_last_bunker_row_plus_1;
         mapping(uint8 => euint8) p2_last_bunker_row_plus_1;
 
-        // TODO: remove this sub-graphs are available
+        // Boolean mapping to tell where building are placed, not knowing whether they are houses or bunkers
         mapping(uint8 => mapping(uint8 => bool)) player1_buildings;
         mapping(uint8 => mapping(uint8 => bool)) player2_buildings;        
+
+        // TODO: remove this sub-graphs are available
+        // Record whether a missile was sent, where, and and where it stopped
+        bool missile_sent;
+        uint8 missile_stopped_at_row_plus_1;
+        uint8 missile_sent_at_column;
     }
 
     // Values of min and max board dimensions
@@ -127,11 +134,11 @@ contract BunkerWarZ is EIP712WithModifier{
         return building_states_array;
     }
 
-    // Get whether the missile hit and where untill event can be querried
+    // Get whether the missile stops and where untill event can be querried
     // TODO: remove this sub-graphs are available
-    function getMissileHit(uint game_id) public view returns (bool, uint8, uint8){
+    function getMissileStop(uint game_id) public view returns (bool, uint8, uint8){
         Game storage game = games[game_id];
-        return (game.missile_hit, game.missile_hit_at_row_plus_1, game.missile_hit_at_column);   
+        return (game.missile_sent, game.missile_stopped_at_row_plus_1, game.missile_sent_at_column);   
     } 
 
     // Create a new game
@@ -211,7 +218,7 @@ contract BunkerWarZ is EIP712WithModifier{
 
                 // decrypt game_result, save it and emit GameEnded event
                 game.game_state = TFHE.decrypt(game_result);
-                emit GameEnded(game.game_state, game_id);
+                emit GameEnded(game_id, game.game_state);
             }
             else{
                 // also, change to player1
@@ -291,9 +298,9 @@ contract BunkerWarZ is EIP712WithModifier{
         mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
         player_buildings[row][column] = true;
 
-        game.missile_hit = false;
-        game.missile_hit_at_row_plus_1 = 0;
-        game.player2_can_send_missile = false;        
+        game.missile_sent = false;
+        game.missile_stopped_at_row_plus_1 = 0;
+        game.missile_sent_at_column = 0;
         // End of TODO
         
         _endTurn(game_id);
@@ -313,24 +320,30 @@ contract BunkerWarZ is EIP712WithModifier{
         require( (player1_plays && game.player1_can_send_missile) || (!player1_plays && game.player2_can_send_missile),
             "Cannot send two missiles in a row" );
 
-        // Decrypt where the last bunker of the column was built if any (0 if none), so where the missile hit
-        mapping(uint8 => euint8) storage bunker_row_plus_1 = (player1_plays)? game.p2_last_bunker_row_plus_1: game.p1_last_bunker_row_plus_1;
-        uint8 hit_at_row_plus_1= TFHE.decrypt(_valueOrZero(bunker_row_plus_1[column]));
+        // Decrypt where the last bunker of the column in the opponent's board was built if any (0 if none)
+        // This indicates where the missile will stop
+        mapping(uint8 => euint8) storage opponent_bunker_row_plus_1 = (player1_plays)? game.p2_last_bunker_row_plus_1: game.p1_last_bunker_row_plus_1;
+        uint8 stop_at_row_plus_1= TFHE.decrypt(_valueOrZero(opponent_bunker_row_plus_1[column]));
 
         // Clear everything before the bunker on the board of the opponent
-        mapping(uint8 => mapping(uint8 => euint8)) storage target_board = (player1_plays)? game.player2_board: game.player1_board;
-        for(uint8 i=hit_at_row_plus_1; i<game.board_height; i++){
-            if (player1_plays) {
-                game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(TFHE.ne(target_board[i][column], ENCRYPTED_EMPTY)));
-            } else {
-                game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(TFHE.ne(target_board[i][column], ENCRYPTED_EMPTY)));
-            }            
-            target_board[i][column] = ENCRYPTED_EMPTY;
+        mapping(uint8 => mapping(uint8 => euint8)) storage opponent_board = (player1_plays)? game.player2_board: game.player1_board;
+        mapping(uint8 => mapping(uint8 => bool)) storage opponent_buildings = (player1_plays)? game.player2_buildings: game.player1_buildings;
+
+        for(uint8 i=stop_at_row_plus_1; i<game.board_height; i++){
+            if (opponent_buildings[i][column]){
+                if (player1_plays) {
+                    game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(TFHE.ne(opponent_board[i][column], ENCRYPTED_EMPTY)));
+                } else {
+                    game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(TFHE.ne(opponent_board[i][column], ENCRYPTED_EMPTY)));
+                }            
+                opponent_board[i][column] = ENCRYPTED_EMPTY;
+                opponent_buildings[i][column] = false;
+            }
         }
 
-        // signal where the missile has hit in the event
-        // hit_row_plus_1_enc=0 means the column was empty
-        emit TurnPlayed(game_id, msg.sender, false, hit_at_row_plus_1, column, game.game_state);
+        // signal where the missile has stopped in the event
+        // stop_row_plus_1_enc=0 means the column was empty
+        emit TurnPlayed(game_id, msg.sender, false, stop_at_row_plus_1, column, game.game_state);
 
         // after sending a missile, a player must build something in order to be able to send another one:
         if (player1_plays) {
@@ -340,14 +353,9 @@ contract BunkerWarZ is EIP712WithModifier{
         }
 
         // TODO: remove this block when sub-graphs are available
-        // set houses to not built after they got destroyed
-        mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
-        for (uint8 i=hit_at_row_plus_1; i<game.board_height; i++){
-            player_buildings[i][column] = false;
-        }
-        game.missile_hit = true;
-        game.missile_hit_at_row_plus_1 = hit_at_row_plus_1;
-        game.missile_hit_at_column = column;        
+        game.missile_sent = true;
+        game.missile_stopped_at_row_plus_1 = stop_at_row_plus_1;
+        game.missile_sent_at_column = column;        
         // End of TODO
 
         _endTurn(game_id);
