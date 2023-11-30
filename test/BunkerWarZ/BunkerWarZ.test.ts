@@ -9,9 +9,11 @@ import { deployBunkerWarZFixture } from "./BunkerWarZ.fixture";
 const UNINITIALIZED = 0;
 const PLAYER1_TURN = 1;
 const PLAYER2_TURN = 2;
-const PLAYER1_WON = 3;
-const PLAYER2_WON = 4;
-const TIE = 5;
+const GAME_ENDED = 3;
+
+const PLAYER1_WON = 0;
+const PLAYER2_WON = 1;
+const TIE = 2;
 
 const EMPTY = 0;
 const HOUSE = 1;
@@ -34,7 +36,7 @@ describe("BunkerWarZ", function () {
         );
         await transaction.wait();
         this.last_game_id++;  
-    };
+    };  
 
     this._player_builds = async (buildingType: uint8, row: uint8, column: uint8, is_alice: bool) => {
         assert(buildingType==HOUSE || buildingType==BUNKER, "wrong building type");
@@ -60,7 +62,7 @@ describe("BunkerWarZ", function () {
         const transaction = await createTransaction(
           this.contract.connect(this.signers.bob).sendMissile, this.last_game_id, column
         );
-        await transaction.wait();      
+        await transaction.wait();
     };
 
   });
@@ -117,9 +119,32 @@ describe("BunkerWarZ", function () {
 
     // now check that the game has ended and that alice won
     let game = await this.contract.games(this.last_game_id);
-    expect(game[5]).to.equal(PLAYER1_WON);
+    expect(game[5]).to.equal(GAME_ENDED);
 
-  });  
+    let gameResult = await this.contract.getGameResult(this.last_game_id);
+    expect(gameResult).to.equal(PLAYER1_WON);
+  }); 
+
+  it.only("should decrease score after missile destroys houses", async function () {
+
+    const board_width = 1;
+    const board_height = 2;
+
+    await this.create_game(board_width, board_height);
+
+    // play 2 turns each
+    await this.alice_builds(HOUSE, 0,0);    
+    await this.bob_builds(HOUSE, 0,0);
+    await this.alice_builds(HOUSE, 1,0);
+    await this.bob_sends_missile_at(0);
+
+    // now check that the game has ended and that bob won
+    let game = await this.contract.games(this.last_game_id);
+    expect(game[5]).to.equal(GAME_ENDED);
+
+    let gameResult = await this.contract.getGameResult(this.last_game_id);
+    expect(gameResult).to.equal(PLAYER2_WON);
+  }); 
 
   it("should allow to build something", async function () {
 
@@ -156,28 +181,28 @@ describe("BunkerWarZ", function () {
 
   });
 
-  it.only("should allow to send a missile", async function () {
+  it("should allow to send a missile", async function () {
 
-    await this.create_game(3, 3);
+    await this.create_game(3, 5);
 
     // alice builds a bunker
-    await this.alice_builds(BUNKER, 0,0);
+    await this.alice_builds(BUNKER, 0,1);
 
     // let bob play so as to return back to alice
-    await this.bob_builds(HOUSE, 0,0);
+    await this.bob_builds(HOUSE, 0,1);
 
     // alice builds a house
-    await this.alice_builds(HOUSE, 1,0);  
+    await this.alice_builds(HOUSE, 1,1);  
 
     // bob sends a missile to the column 0:
-    await this.bob_sends_missile_at(0);
+    await this.bob_sends_missile_at(1);
 
-    // check that alice's house was destroyed and that she can see where the missile hit
-    let missile_hit, missile_hit_at_row_plus1, missile_hit_at_column;
-    [missile_hit, missile_hit_at_row_plus1, missile_hit_at_column] = await this.contract.getMissileHit(this.last_game_id);
-    expect(missile_hit).to.equal(true);    
-    expect(missile_hit_at_row_plus1).to.equal(0+1);    
-    expect(missile_hit_at_column).to.equal(0);    
+    // check that alice's house was destroyed and that she can see where the missile stop
+    let missile_sent, missile_stop_at_row_plus1, missile_sent_at_column;
+    [missile_sent, missile_stop_at_row_plus1, missile_sent_at_column] = await this.contract.getMissileStop(this.last_game_id);
+    expect(missile_sent).to.equal(true);    
+    expect(missile_stop_at_row_plus1).to.equal(0+1);    
+    expect(missile_sent_at_column).to.equal(1);    
   });  
 
   it("should destroy unprotected houses after missile", async function () {
@@ -193,16 +218,16 @@ describe("BunkerWarZ", function () {
     // alice should not be able to build a house on the next row after her first house was destroyed
     await expect(this.alice_builds(HOUSE, 1,0)).to.throw;
 
-    // check that alice can see where the missile hit
-    let missile_hit, missile_hit_at_row_plus1, missile_hit_at_column;
-    [missile_hit, missile_hit_at_row_plus1, missile_hit_at_column] = await this.contract.getMissileHit(this.last_game_id);
-    expect(missile_hit).to.equal(true);    
-    expect(missile_hit_at_row_plus1).to.equal(0);    
-    expect(missile_hit_at_column).to.equal(0);    
+    // // check that alice can see where the missile stop
+    let missile_sent, missile_stop_at_row_plus1, missile_sent_at_column;
+    [missile_sent, missile_stop_at_row_plus1, missile_sent_at_column] = await this.contract.getMissileStop(this.last_game_id);
+    expect(missile_sent).to.equal(true);    
+    expect(missile_stop_at_row_plus1).to.equal(0);    
+    expect(missile_sent_at_column).to.equal(0);    
 
   });
 
-  it("should store the missile hit position", async function () {
+  it("should store the missile stop position", async function () {
 
     await this.create_game(3, 3);
 
@@ -212,12 +237,12 @@ describe("BunkerWarZ", function () {
     // bob sends a missile to the column 0:
     await this.bob_sends_missile_at(0);
 
-    // check that alice can see where the missile hit
-    let missile_hit, missile_hit_at_row_plus1, missile_hit_at_column;
-    [missile_hit, missile_hit_at_row_plus1, missile_hit_at_column] = await this.contract.getMissileHit(this.last_game_id);
-    expect(missile_hit).to.equal(true);    
-    expect(missile_hit_at_row_plus1).to.equal(1);
-    expect(missile_hit_at_column).to.equal(0);    
+    // check that alice can see where the missile stop
+    let missile_stop, missile_stop_at_row_plus1, missile_stop_at_column;
+    [missile_stop, missile_stop_at_row_plus1, missile_stop_at_column] = await this.contract.getMissileStop(this.last_game_id);
+    expect(missile_stop).to.equal(true);    
+    expect(missile_stop_at_row_plus1).to.equal(1);
+    expect(missile_stop_at_column).to.equal(0);    
 
   });    
 
