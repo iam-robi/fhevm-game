@@ -309,6 +309,11 @@ contract BunkerWarZ is EIP712WithModifier{
         // Clear everything before the bunker on the board of the opponent
         mapping(uint8 => mapping(uint8 => euint8)) storage target_board = (player1_plays)? game.player2_board: game.player1_board;
         for(uint8 i=hit_at_row_plus_1; i<game.board_height; i++){
+            if (player1_plays) {
+                game.player2_houses = TFHE.sub(game.player2_houses, TFHE.asEuint8(TFHE.ne(target_board[i][column], ENCRYPTED_EMPTY)));
+            } else {
+                game.player1_houses = TFHE.sub(game.player1_houses, TFHE.asEuint8(TFHE.ne(target_board[i][column], ENCRYPTED_EMPTY)));
+            }            
             target_board[i][column] = ENCRYPTED_EMPTY;
         }
 
