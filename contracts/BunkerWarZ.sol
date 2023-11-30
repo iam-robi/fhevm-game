@@ -25,13 +25,6 @@ contract BunkerWarZ is EIP712WithModifier{
         bool player1_can_send_missile; // prevent sending two missiles in a row
         bool player2_can_send_missile;  
 
-        // TODO: remove this sub-graphs are available
-        // these variables are used because the event cannot 
-        // be queried for now on the tesnet, but the information is in the MissileHit events
-        bool missile_hit;
-        uint8 missile_hit_at_row_plus_1;
-        uint8 missile_hit_at_column;
-
         // Numbers of houses built by players
         euint8 player1_houses;
         euint8 player2_houses;
@@ -132,13 +125,6 @@ contract BunkerWarZ is EIP712WithModifier{
             }
         }
         return building_states_array;
-    }
-
-    // Get whether the missile hit and where untill event can be querried
-    // TODO: remove this sub-graphs are available
-    function getMissileHit(uint game_id) public view returns (bool, uint8, uint8){
-        Game storage game = games[game_id];
-        return (game.missile_hit, game.missile_hit_at_row_plus_1, game.missile_hit_at_column);
     }
 
     // Create a new game
@@ -293,11 +279,7 @@ contract BunkerWarZ is EIP712WithModifier{
         // emit event, the location of the building is known
         emit TurnPlayed(true, player1_plays, row, column, game_id);
 
-        // TODO: remove this block sub-graphs are available
-        // also reset the missile hit values in the gamestate untill event can be querried
-        game.missile_hit = false;
-        game.missile_hit_at_row_plus_1 = 0;
-        game.missile_hit_at_column = 0;
+        // TODO: remove this block when sub-graphs are available
         // mark the building as built
         mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
         player_buildings[row][column] = true;
@@ -341,11 +323,7 @@ contract BunkerWarZ is EIP712WithModifier{
             game.player2_can_send_missile = false;
         }
 
-        // TODO: remove this block sub-graphs are available
-        // also store the missile hit in the gamestate untill event can be querried
-        game.missile_hit = true;
-        game.missile_hit_at_row_plus_1 = hit_at_row_plus_1;
-        game.missile_hit_at_column = column;
+        // TODO: remove this block when sub-graphs are available
         // set houses to not built after they got destroyed
         mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
         for (uint8 i=hit_at_row_plus_1; i<game.board_height; i++){
