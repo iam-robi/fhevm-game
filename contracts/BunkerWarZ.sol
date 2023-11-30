@@ -72,10 +72,10 @@ contract BunkerWarZ is EIP712WithModifier{
     mapping(uint => Game) public games;
     uint public new_game_id;
 
-    // Event to notify when a new game is created
-    event NewGameCreated(uint gameId, uint8 board_width, uint8 board_height, address indexed player1, address indexed player2);
-    event TurnPlayed(bool is_building, bool is_player1, uint8 row, uint8 column, uint indexed gameId);
-    event GameEnded(uint8 game_end_state, uint indexed gameId);
+    // Events to notify when a new game is created or ended, and a turn played
+    event NewGameCreated(uint indexed game_id, uint8 board_width, uint8 board_height, address indexed player1, address indexed player2);
+    event GameEnded(uint indexed game_id, uint8 game_end_state);
+    event TurnPlayed(uint indexed game_id, address indexed player, bool is_building, uint8 row, uint8 column, uint8 new_game_state);
 
     modifier onlyPlayers(uint game_id) {
         require(
@@ -126,6 +126,13 @@ contract BunkerWarZ is EIP712WithModifier{
         }
         return building_states_array;
     }
+
+    // Get whether the missile hit and where untill event can be querried
+    // TODO: remove this sub-graphs are available
+    function getMissileHit(uint game_id) public view returns (bool, uint8, uint8){
+        Game storage game = games[game_id];
+        return (game.missile_hit, game.missile_hit_at_row_plus_1, game.missile_hit_at_column);   
+    } 
 
     // Create a new game
     function newGame(uint8 _board_width, uint8 _board_height, address _player1, address _player2) public {
@@ -277,12 +284,16 @@ contract BunkerWarZ is EIP712WithModifier{
         bunker_row_plus_1[column] = TFHE.cmux(TFHE.eq(encrypted_cell, BUNKER), TFHE.asEuint8(row+1), _valueOrZero(bunker_row_plus_1[column]));
 
         // emit event, the location of the building is known
-        emit TurnPlayed(true, player1_plays, row, column, game_id);
+        emit TurnPlayed(game_id, msg.sender, true, row, column, game.game_state);
 
         // TODO: remove this block when sub-graphs are available
         // mark the building as built
         mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
         player_buildings[row][column] = true;
+
+        game.missile_hit = false;
+        game.missile_hit_at_row_plus_1 = 0;
+        game.player2_can_send_missile = false;        
         // End of TODO
         
         _endTurn(game_id);
@@ -317,9 +328,9 @@ contract BunkerWarZ is EIP712WithModifier{
             target_board[i][column] = ENCRYPTED_EMPTY;
         }
 
-        // signal where the missile has hit
+        // signal where the missile has hit in the event
         // hit_row_plus_1_enc=0 means the column was empty
-        emit TurnPlayed(false, player1_plays, hit_at_row_plus_1, column, game_id);
+        emit TurnPlayed(game_id, msg.sender, false, hit_at_row_plus_1, column, game.game_state);
 
         // after sending a missile, a player must build something in order to be able to send another one:
         if (player1_plays) {
@@ -334,6 +345,9 @@ contract BunkerWarZ is EIP712WithModifier{
         for (uint8 i=hit_at_row_plus_1; i<game.board_height; i++){
             player_buildings[i][column] = false;
         }
+        game.missile_hit = true;
+        game.missile_hit_at_row_plus_1 = hit_at_row_plus_1;
+        game.missile_hit_at_column = column;        
         // End of TODO
 
         _endTurn(game_id);
