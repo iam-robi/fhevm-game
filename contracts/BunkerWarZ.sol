@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: MIT
 
 pragma solidity >=0.8.13 <0.9.0;
 
@@ -56,12 +56,6 @@ contract BunkerWarZ is EIP712WithModifier{
         // Boolean mapping to tell where building are placed, not knowing whether they are houses or bunkers
         mapping(uint8 => mapping(uint8 => bool)) player1_buildings;
         mapping(uint8 => mapping(uint8 => bool)) player2_buildings;        
-
-        // TODO: remove this sub-graphs are available
-        // Record whether a missile was sent, where, and and where it stopped
-        bool missile_sent;
-        uint8 missile_stopped_at_row_plus_1;
-        uint8 missile_sent_at_column;
     }
 
     // Values of min and max board dimensions
@@ -103,6 +97,7 @@ contract BunkerWarZ is EIP712WithModifier{
     }
 
     // TODO: remove this sub-graphs are available
+    // TODO: querry several values at once with one decryption
     // Get some value of an encrypted board (if the player needs to rebuild his game state)
     function getBoardValue(
         uint game_id, 
@@ -122,35 +117,15 @@ contract BunkerWarZ is EIP712WithModifier{
             revert("Only players of the game can get board values");
         }
     }
-    
-    
-    function getOpponentBuildingStatus(uint gameId, uint8 row, uint8 column) public view returns (bool) {
-        Game storage game = games[gameId];
-
-        // Check if the sender is player1 or player2
-        bool isSenderPlayer1 = msg.sender == game.player1;
-        bool isSenderPlayer2 = msg.sender == game.player2;
-
-        require(isSenderPlayer1 || isSenderPlayer2, "Sender is not a player in this game");
-
-        // Return the opponent's building status
-        if (isSenderPlayer1) {
-            return game.player2_buildings[row][column];
-        } else {
-            return game.player1_buildings[row][column];
-        }
-    }
-
-
 
     // TODO: remove this sub-graphs are available
     // Get the state "built or Not built" of cells of a player
     function getBuildingStates(
         uint game_id,
-        bool is_player1
+        bool isPlayer1
         ) external view returns (bool[] memory){
         Game storage game = games[game_id];
-        mapping(uint8 => mapping(uint8 => bool)) storage buildings = (is_player1)? game.player1_buildings: game.player2_buildings;
+        mapping(uint8 => mapping(uint8 => bool)) storage buildings = (isPlayer1)? game.player1_buildings: game.player2_buildings;
         bool[] memory building_states_array = new bool[](game.board_width*game.board_height);
         for (uint8 i=0; i<game.board_width; i++){
             for (uint8 j=0; j<game.board_height; j++){
@@ -159,13 +134,6 @@ contract BunkerWarZ is EIP712WithModifier{
         }
         return building_states_array;
     }
-
-    // Get whether the missile stops and where untill event can be querried
-    // TODO: remove this sub-graphs are available
-    function getMissileStop(uint game_id) public view returns (bool, uint8, uint8){
-        Game storage game = games[game_id];
-        return (game.missile_sent, game.missile_stopped_at_row_plus_1, game.missile_sent_at_column);   
-    } 
 
     // Create a new game
     function newGame(uint8 _board_width, uint8 _board_height, address _player1, address _player2) public {
@@ -325,10 +293,6 @@ contract BunkerWarZ is EIP712WithModifier{
         // mark the building as built
         mapping(uint8 => mapping(uint8 => bool)) storage player_buildings = (player1_plays)? game.player1_buildings: game.player2_buildings;
         player_buildings[row][column] = true;
-
-        game.missile_sent = false;
-        game.missile_stopped_at_row_plus_1 = 0;
-        game.missile_sent_at_column = 0;
         // End of TODO
         
         // emit event, the location of the building is known
@@ -384,12 +348,6 @@ contract BunkerWarZ is EIP712WithModifier{
         } else {
             game.player2_can_send_missile = false;
         }
-
-        // TODO: remove this block when sub-graphs are available
-        game.missile_sent = true;
-        game.missile_stopped_at_row_plus_1 = stop_at_row_plus_1;
-        game.missile_sent_at_column = column;        
-        // End of TODO
 
         // signal where the missile has stopped in the event
         // stop_row_plus_1_enc=0 means the column was empty

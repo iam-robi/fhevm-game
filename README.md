@@ -1,4 +1,4 @@
-# Fhevm game bounty: BunkerWarZ
+# Fhevm game bounty: "Bunker War Z" smart contract
 
 ## install
 

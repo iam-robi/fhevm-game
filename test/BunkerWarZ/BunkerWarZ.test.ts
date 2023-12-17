@@ -125,7 +125,7 @@ describe("BunkerWarZ", function () {
     expect(gameResult).to.equal(PLAYER1_WON);
   }); 
 
-  it.only("should decrease score after missile destroys houses", async function () {
+  it("should decrease score after missile destroys houses", async function () {
 
     const board_width = 1;
     const board_height = 2;
